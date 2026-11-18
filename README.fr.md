@@ -19,7 +19,8 @@ Il réagit à tout ce que votre ordinateur joue (Spotify, YouTube, jeux...), fon
 
 Vidéo en pleine qualité (24 s, 1280x720, sans son) : d'un passage calme au passage fort, avec un croisement. Vous pouvez aussi la télécharger : [`docs/preview.mp4`](docs/preview.mp4).
 
-<!-- VIDEO : glissez docs/preview.mp4 ici dans l'éditeur web de GitHub pour qu'elle se lise sur cette page -->
+https://github.com/user-attachments/assets/100434ff-8826-4404-b3cd-d09c924d0569
+
 L'aperçu a été enregistré avec un morceau de démonstration original généré par ordinateur : ce dépôt ne contient donc aucune musique protégée.
 
 ## Prérequis
