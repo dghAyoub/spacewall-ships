@@ -60,6 +60,13 @@ Le tout premier passage au nouveau fond d'écran peut faire un flash blanc d'env
 - **Rien n'est envoyé nulle part.** Le pont n'écoute que sur `127.0.0.1:8777`.
 - Pas de réaction au son ? Vérifiez que la musique passe par la sortie *par défaut* et que `parec` fonctionne : `parec -d @DEFAULT_MONITOR@ --format=s16le | head -c 100 | wc -c`.
 
+## Windows (expérimental)
+Un petit programme Windows à part entière (sans Lively ni autre application) : la même animation derrière vos icônes du bureau, qui écoute vos haut-parleurs, avec une icône dans la zone de notification pour l'allumer et l'éteindre.
+- **Téléchargement :** [`SpaceWall-Windows-v0.1.0.zip`](https://github.com/dghAyoub/spacewall-ships/releases/tag/windows-v0.1.0) (68 Mo, sur la page des Releases).
+- Extrayez **tout** le zip dans un dossier, puis double-cliquez sur `1-RUN-ALL-TESTS.bat`. Le premier lancement teste votre PC et choisit la meilleure façon de se placer derrière les icônes. Le programme n'est pas signé : si Windows affiche « Windows a protégé votre ordinateur », cliquez sur **Informations complémentaires**, puis **Exécuter quand même**.
+- **Testé sur un seul PC :** Windows 10 Pro 22H2, Intel HD 620, audio Realtek. Non testé : Windows 11, d'autres cartes graphiques, plusieurs écrans, « Démarrer avec Windows » après un redémarrage. En cas de problème, l'icône a un élément « Diagnostic », et le journal est dans `%APPDATA%\SpaceWall\log.txt`.
+- Mode d'emploi : [`windows/README-WINDOWS.fr.txt`](windows/README-WINDOWS.fr.txt). Code source (C#, .NET 8, WebView2) : [`windows/src`](windows/src).
+
 ## Licence
 MIT, voir `LICENSE`.
 

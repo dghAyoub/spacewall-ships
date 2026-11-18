@@ -60,6 +60,13 @@ The very first switch to the wallpaper can flash white for about 2 seconds: Plas
 - **Nothing is sent anywhere.** The bridge listens on `127.0.0.1:8777` only.
 - No sound reaction? Check that music is playing on the *default* output, and that `parec` works: `parec -d @DEFAULT_MONITOR@ --format=s16le | head -c 100 | wc -c`.
 
+## Windows (experimental)
+A small Windows program of its own (no Lively or any other app needed): the same animation behind your desktop icons, listening to your speakers, with a tray icon to turn it on and off.
+- **Download:** [`SpaceWall-Windows-v0.1.0.zip`](https://github.com/dghAyoub/spacewall-ships/releases/tag/windows-v0.1.0) (68 MB, on the Releases page).
+- Extract the **whole** zip into a folder, then double-click `1-RUN-ALL-TESTS.bat`. The first run tests your PC and picks the best way to sit behind the icons. The program is not signed: if Windows says "Windows protected your PC", click **More info**, then **Run anyway**.
+- **Tested on one PC only:** Windows 10 Pro 22H2, Intel HD 620, Realtek audio. Not tested: Windows 11, other graphics cards, several monitors, "Start with Windows" after a restart. If something fails, the tray icon has a "Diagnostics" item, and the log is in `%APPDATA%\SpaceWall\log.txt`.
+- Instructions: [`windows/README-WINDOWS.txt`](windows/README-WINDOWS.txt). Source code (C#, .NET 8, WebView2): [`windows/src`](windows/src).
+
 ## License
 MIT, see `LICENSE`.
 
