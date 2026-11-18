@@ -4,8 +4,6 @@
 
 <p align="center"><img src="docs/preview.gif" alt="SpaceWall Ships : nébuleuse, pluie et deux vaisseaux qui réagissent à la musique" width="720"></p>
 
-<p align="center"><b>▶ <a href="https://dghayoub.github.io/spacewall-ships/">Regarder la vidéo</a></b> (pleine qualité, se lit dans votre navigateur)</p>
-
 Un fond d'écran animé qui réagit au son, pour **KDE Plasma 5** : une nébuleuse violette, une pluie qui tombe et deux petits vaisseaux dont les mouvements suivent votre musique.
 Il réagit à tout ce que votre ordinateur joue (Spotify, YouTube, jeux...), fonctionne en local et ne coûte rien.
 
@@ -19,7 +17,9 @@ Il réagit à tout ce que votre ordinateur joue (Spotify, YouTube, jeux...), fon
 | <img src="docs/screenshot-1-quiet.jpg" width="400"><br>Un passage calme : faisceaux fins et ternes, pluie légère | <img src="docs/screenshot-2-build.jpg" width="400"><br>La musique monte : les faisceaux deviennent plus brillants |
 | <img src="docs/screenshot-3-loud.jpg" width="400"><br>Le passage fort : faisceaux brillants et épais, pluie dense | <img src="docs/screenshot-4-crossing.jpg" width="400"><br>Les vaisseaux se croisent et échangent leurs côtés |
 
-Vidéo en pleine qualité (24 s, 1280x720, sans son, 6,6 Mo) : **[à regarder sur la page web](https://dghayoub.github.io/spacewall-ships/)**, ou téléchargez [`docs/preview.mp4`](docs/preview.mp4). Elle va d'un passage calme au passage fort, avec un croisement.
+Vidéo en pleine qualité (24 s, 1280x720, sans son) : d'un passage calme au passage fort, avec un croisement. Vous pouvez aussi la télécharger : [`docs/preview.mp4`](docs/preview.mp4).
+
+<!-- VIDEO : glissez docs/preview.mp4 ici dans l'éditeur web de GitHub pour qu'elle se lise sur cette page -->
 L'aperçu a été enregistré avec un morceau de démonstration original généré par ordinateur : ce dépôt ne contient donc aucune musique protégée.
 
 ## Prérequis
