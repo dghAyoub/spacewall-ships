@@ -1,0 +1,16 @@
+{
+  "KPlugin": {
+    "Authors": [{ "Name": "SpaceWall" }],
+    "Category": "System Information",
+    "Description": "Turn the SpaceWall animated wallpaper on or off",
+    "Icon": "preferences-desktop-wallpaper",
+    "Id": "org.spacewall.toggle",
+    "License": "MIT",
+    "Name": "SpaceWall Toggle",
+    "ServiceTypes": ["Plasma/Applet"],
+    "Version": "1.0"
+  },
+  "KPackageStructure": "Plasma/Applet",
+  "X-Plasma-API": "declarativeappletscript",
+  "X-Plasma-MainScript": "ui/main.qml"
+}

@@ -1,0 +1,452 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SpaceWall Ships</title>
+<style>
+html,body{margin:0;height:100%;background:#05030f;overflow:hidden}
+canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
+#dbg{position:fixed;left:8px;top:8px;color:#9fe;font:12px monospace;white-space:pre;z-index:9;display:none;text-shadow:0 0 3px #000}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="fg"></canvas><div id="dbg"></div>
+<script>
+"use strict";
+/* ---------- params ---------- */
+const Q = new URLSearchParams(location.search);
+const DEMO = Q.has('demo');
+const FPS = +(Q.get('fps') || 30);
+const BGS = +(Q.get('bgscale') || 1.0);   // nebula resolution scale
+const FGS = +(Q.get('fgscale') || 1.0);   // ships/trails resolution scale
+let K = 1;                                 // size factor = fg canvas height / 1080
+const SENS = +(Q.get('sens') || 1.0);       // reactivity
+const dbg = document.getElementById('dbg'); if (Q.has('debug')) dbg.style.display = 'block';
+
+/* ---------- audio: raw PCM in (window.A), FFT here ---------- */
+const SR = 44100, FN = 1024, LOG = 10, RM = 4095;
+const ring = new Float32Array(RM + 1); let wp = 0, lastPcm = -1e9;
+window.A = function (b64) {
+  const s = atob(b64), n = s.length >> 1;
+  for (let i = 0; i < n; i++) {
+    let v = s.charCodeAt(2 * i) | (s.charCodeAt(2 * i + 1) << 8); if (v > 32767) v -= 65536;
+    ring[wp++ & RM] = v / 32768;
+  }
+  lastPcm = performance.now();
+};
+
+/* audio from the local bridge when the page is served over http (Plasma wallpaper mode) */
+if (/^https?:/.test(location.protocol) && !DEMO && !Q.has('noaudio')) {
+  const open = () => {
+    const es = new EventSource('/audio');
+    es.onmessage = ev => window.A(ev.data);
+    es.addEventListener('pause', ev => { if (window.P) window.P(ev.data === '1'); });
+    es.onerror = () => { es.close(); setTimeout(open, 1500); };
+  };
+  open();
+}
+const rev = new Uint16Array(FN), cosT = new Float32Array(FN / 2), sinT = new Float32Array(FN / 2), win = new Float32Array(FN);
+for (let i = 0; i < FN; i++) { rev[i] = (rev[i >> 1] >> 1) | ((i & 1) << (LOG - 1)); win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (FN - 1)); }
+for (let k = 0; k < FN / 2; k++) { cosT[k] = Math.cos(2 * Math.PI * k / FN); sinT[k] = -Math.sin(2 * Math.PI * k / FN); }
+const re = new Float32Array(FN), im = new Float32Array(FN);
+function fft() {
+  for (let i = 0; i < FN; i++) { const j = rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+  for (let size = 2; size <= FN; size <<= 1) {
+    const half = size >> 1, step = FN / size;
+    for (let i = 0; i < FN; i += size) for (let j = 0, k = 0; j < half; j++, k += step) {
+      const a = i + j, b = a + half;
+      const tr = re[b] * cosT[k] - im[b] * sinT[k], ti = re[b] * sinT[k] + im[b] * cosT[k];
+      re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+    }
+  }
+}
+const GAIN = +(Q.get('gain') || 1);                 // brightness of the background (the still picture uses more)
+const CALM = Q.has('calm') ? 1 : 0;                // calm = dot stars instead of rain streaks (for the still picture)
+const STILL = Q.has('still');                      // ?still=1 renders ONE frame (used to make the matching still wallpaper)
+const T0 = +(Q.get('t0') || 12.0);                 // the animation always starts from this exact nebula state
+const S0 = .3;                                      // starting loudness: identical to the still image
+const S = { bass: S0, mid: S0, high: S0, energy: S0, beat: 0, live: false };
+const pk = [1e-4, 1e-4, 1e-4], sm = [S0, S0, S0];
+let bassAvg = S0, lastBeat = 0;
+const LC = new Float32Array(300); for (let k = 2; k < 300; k++) LC[k] = Math.log2(k / 2) / Math.log2(140);   // bin -> 0 (low) .. 1 (high pitch)
+let centAvg = .5, centDev = .12, linSlow = [0, 0, 0], lastHit = [0, 0, 0];
+S.cent = 0; S.midHit = false; S.highHit = false;
+function bandMean(lo, hi) { let s = 0; for (let k = lo; k <= hi; k++) s += Math.hypot(re[k], im[k]); return s / (hi - lo + 1) / FN; }
+function analyse(now, dt) {
+  let raw = [0, 0, 0], lin = [0, 0, 0], cNow = null;
+  S.live = now - lastPcm < 800;
+  if (S.live && !DEMO) {
+    for (let i = 0; i < FN; i++) { re[i] = ring[(wp - FN + i) & RM] * win[i]; im[i] = 0; }
+    fft();
+    raw = [bandMean(1, 4), bandMean(5, 46), bandMean(47, 280)];   // ~43-170Hz, 215Hz-2k, 2k-12k
+    lin = raw.slice();                                              // un-normalised levels: used to detect accents at any volume
+    let num = 0, den = 0; for (let k = 2; k <= 280; k++) { const m = Math.hypot(re[k], im[k]); num += LC[k] * m; den += m; }
+    if (den > 1e-4) cNow = num / den;                                // pitch centre of the sound right now
+    for (let b = 0; b < 3; b++) {
+      const decay = raw[b] < pk[b] * 0.2 ? 0.5 : 0.8;                    // volume turned down: re-adapt in ~3 s, otherwise ~5 s
+      pk[b] = Math.max(pk[b] * Math.pow(decay, dt), raw[b], 1e-4);
+      raw[b] = raw[b] < 5e-6 ? 0 : Math.pow(Math.min(1, raw[b] / (pk[b] * 0.8)), 0.6);   // relative to the recent peak (so any volume works), quiet parts lifted, loud/soft stay different
+    }
+  } else {                                                        // idle/demo: gentle synthetic beat
+    const t = now / 1000, ph = (t % 0.52) / 0.52;
+    const kick = Math.exp(-ph * 6), hat = Math.exp(-((t % 0.26) / 0.26) * 9) * 0.6;
+    const idle = DEMO ? 1 : 0.35;
+    const snare = Math.exp(-(((t + 0.52) % 1.04) / 1.04) * 9) * 0.55;
+    raw = [(0.25 + 0.75 * kick) * idle, (0.35 + 0.25 * Math.sin(t * 0.9) + 0.2 * Math.sin(t * 2.3) + snare) * idle, (0.15 + hat) * idle];
+    cNow = 0.5 + 0.18 * Math.sin(t * 0.5) + 0.08 * Math.sin(t * 1.9);
+    lin = raw.slice();
+  }
+  const keys = ['bass', 'mid', 'high'];
+  for (let b = 0; b < 3; b++) {
+    const x = Math.min(1, raw[b] * SENS), up = 1 - Math.pow(1e-9, dt), dn = 1 - Math.pow(0.12, dt);
+    sm[b] += (x - sm[b]) * (x > sm[b] ? up : dn);
+    S[keys[b]] = sm[b];
+  }
+  S.energy = S.bass * 0.5 + S.mid * 0.35 + S.high * 0.15;
+  // accents: each band's level compared with its OWN recent average (a ratio, so it works at any volume and for loud, compressed music)
+  for (let b = 0; b < 3; b++) if (linSlow[b] === 0) linSlow[b] = lin[b];
+  const rt = [lin[0] / Math.max(linSlow[0], 1e-6), lin[1] / Math.max(linSlow[1], 1e-6), lin[2] / Math.max(linSlow[2], 1e-6)];
+  if (rt[0] > 1.4 && lin[0] > 2e-5 && now - lastBeat > 230) { S.beat = Math.min(1, 0.5 + (rt[0] - 1.4) * 0.6); lastBeat = now; S.fire = true; }
+  S.midHit = rt[1] > 1.3 && lin[1] > 2e-5 && now - lastHit[1] > 190; if (S.midHit) lastHit[1] = now;
+  S.highHit = rt[2] > 1.6 && lin[2] > 2e-5 && now - lastHit[2] > 140; if (S.highHit) lastHit[2] = now;
+  for (let b = 0; b < 3; b++) linSlow[b] += (lin[b] - linSlow[b]) * (1 - Math.pow(0.2, dt));
+  S.beat *= Math.pow(0.02, dt);
+  // pitch: where the sound sits compared with its own recent average, -1 (lower) .. +1 (higher)
+  if (cNow !== null) {
+    centAvg += (cNow - centAvg) * (1 - Math.pow(0.7, dt));
+    centDev += (Math.abs(cNow - centAvg) - centDev) * (1 - Math.pow(0.7, dt));
+    const cn = Math.max(-1, Math.min(1, (cNow - centAvg) / (Math.max(0.04, centDev) * 2.2)));
+    S.cent += (cn - S.cent) * (1 - Math.pow(0.02, dt));
+  } else S.cent *= Math.pow(0.3, dt);
+}
+
+/* ---------- background: nebula pass (cheap, low-rate) + crisp star pass ---------- */
+const NEBS = +(Q.get('nebscale') || 0.75), NEB_EVERY = +(Q.get('nebevery') || 5);
+const bgc = document.getElementById('bg');
+const gl = bgc.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'low-power' });
+const VS = `#version 300 es
+in vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
+const COMMON = `
+float h(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); return fract(p.x*p.y); }
+float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(h(i),h(i+vec2(1,0)),f.x), mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x), f.y); }
+const float F = 4.4, KK = .25;`;
+const FS_NEB = `#version 300 es
+precision highp float;
+uniform vec2 R, AX; uniform float T, SC;
+out vec4 o;
+${COMMON}
+const mat2 ROT = mat2(.8, .6, -.6, .8);
+float fbm(vec2 p){ float v=0., a=.5; for(int i=0;i<6;i++){ v+=a*n(p); p=ROT*p*2.02+vec2(1.7,9.2); a*=.5; } return v; }
+float ridge(vec2 p){ float v=0., a=.5; for(int i=0;i<5;i++){ float r=1.-abs(2.*n(p)-1.); v+=a*r*r; p=ROT*p*2.1+vec2(3.1,7.7); a*=.5; } return v; }
+void main(){
+  vec2 uv = gl_FragCoord.xy / R.y; float asp = R.x/R.y;
+  vec2 p = uv*F + AX*SC*KK + vec2(0., T*.01);
+  vec2 w = vec2(fbm(p + vec2(0., T*.03)), fbm(p + vec2(5.2,1.3) - vec2(T*.02,0.)));
+  float f    = fbm(p + 2.4*w);                    // main cloud shape
+  float fine = fbm(p*2.7 + w*3.1 + 7.3);          // fine filaments
+  float rg   = ridge(p*1.3 + w*1.6);              // thread-like bright ridges
+  float band = exp(-pow((dot(uv-vec2(asp*.62,.5), vec2(.9,.43)) + .14*sin(uv.y*3.+T*.06))/ .36, 2.));
+  float neb  = smoothstep(.26,.95, f*.86 + fine*.24) * (.35 + .9*band);
+  vec3 c0 = vec3(.09,.035,.30), c1 = vec3(.28,.07,.64), c2 = vec3(.60,.19,.98), c3 = vec3(1.,.48,.92), c4 = vec3(.28,.48,1.);
+  vec3 ncol = mix(c0, c1, smoothstep(.18,.55,f));
+  ncol = mix(ncol, c2, smoothstep(.45,.85,f));
+  ncol = mix(ncol, c3, smoothstep(.7,1.,f*band*1.5)*.55);
+  ncol += c4 * smoothstep(.55,.92,rg) * .22;                       // cool blue rim on the filaments
+  float lane = 1. - .5*smoothstep(.5,.85, fine);                  // dark dust lanes
+  vec3 c = ncol*neb*lane;
+  c += c2 * pow(rg, 3.) * neb * .32;                               // bright thread highlights
+  o = vec4(c, 1.);
+}`;
+const FS_COMP = `#version 300 es
+precision highp float;
+uniform sampler2D NT; uniform vec2 R, AX, SHIFT; uniform float T, SC, bass, mid, high, beat, en, calm, gain;
+out vec4 o;
+${COMMON}
+vec3 stars(vec2 uv, float scale, float spd, float bright, float stretch, float dens){
+  vec2 p = uv*scale - AX*SC*spd;
+  vec2 ax = normalize(AX), pe = vec2(-ax.y, ax.x);
+  vec2 g = floor(p), f = fract(p)-.5;
+  float r = h(g);
+  vec2 off = (vec2(h(g+3.1), h(g+7.7))-.5)*.6;
+  vec2 dd = f - off;
+  float d = length(vec2(dot(dd, ax)/(1.+stretch*7.), dot(dd, pe)*1.6));   // long thin streaks = "rain"
+  float sz = .018 + .035*h(g+9.2);
+  float s = smoothstep(sz, 0., d) * step(dens, r);
+  float tw = .7 + .3*sin(T*(1.5+3.*r) + r*40.);
+  vec3 col = mix(vec3(.75,.85,1.), vec3(1.,.85,.95), h(g+1.7));
+  return col * s * tw * bright * 1.25;
+}
+float pts(vec2 uv){
+  vec2 p = uv*64. + AX*SC*.35, g = floor(p), f = fract(p) - .5;
+  float r = h(g);
+  vec2 off = (vec2(h(g+1.3), h(g+5.9)) - .5) * .6;
+  float d = length(f - off);
+  return step(.9, r) * exp(-d*d*260.) * (.35 + .65*h(g+3.7)) * (.7 + .3*sin(T*(1.+3.*r) + r*50.));
+}
+void main(){
+  vec2 uv = gl_FragCoord.xy / R.y; float asp = R.x/R.y;
+  vec3 col = mix(vec3(.006,.004,.03), vec3(.016,.01,.07), uv.y);
+  vec3 neb = texture(NT, (uv - SHIFT) / vec2(asp, 1.)).rgb;
+  col += neb * (.52 + .42*bass + .26*beat + .1*en);
+  float st = (en*1.8 + 1.0) * mix(1., .04, calm);
+  col += vec3(.7,.8,1.) * pts(uv) * .55;                      // crisp point stars (depth)
+  col += stars(uv,      11., 1.2, .6*(.8+.5*high),            st*.5, .80);
+  col += stars(uv+.3,   20., 2.2, .9*(.8+.5*high),            st*1.0, .83);
+  col += stars(uv+.7,   34., 4.0, 1.2*(.8+.6*high+beat*.4),   st*2.0, .85);
+  float v = smoothstep(1.35, .35, length((gl_FragCoord.xy/R - .5)*vec2(1.2,1.)));
+  col *= mix(.42, 1., v);
+  col *= .6 * gain;                                   // overall background darkness (ships and beams are drawn on a separate layer)
+  col += (h(gl_FragCoord.xy + T) + h(gl_FragCoord.yx*1.37 + T*1.3) - 1.) / 255.;   // triangular dither: no banding in the dark gradients
+  o = vec4(col, 1.);
+}`;
+function sh(t, s) { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; }
+function mk(fs) { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.bindAttribLocation(p, 0, 'p'); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
+const pNeb = mk(FS_NEB), pComp = mk(FS_COMP);
+const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const un = (p, names) => { const u = {}; names.forEach(k => u[k] = gl.getUniformLocation(p, k)); return u; };
+const UN = un(pNeb, ['R', 'AX', 'T', 'SC']);
+const UC = un(pComp, ['NT', 'R', 'AX', 'SHIFT', 'T', 'SC', 'bass', 'mid', 'high', 'beat', 'en', 'calm', 'gain']);
+let nebTex = null, nebFbo = null, NW = 2, NH = 2, sc0 = 0, nebCount = 1e9;
+function setupNeb(cw, ch) {
+  NW = Math.max(2, Math.round(cw * NEBS)); NH = Math.max(2, Math.round(ch * NEBS));
+  if (nebTex) gl.deleteTexture(nebTex); if (nebFbo) gl.deleteFramebuffer(nebFbo);
+  nebTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, nebTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, NW, NH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  nebFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, nebFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nebTex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null); nebCount = 1e9;
+}
+let t0now = null;
+function drawStillShips() {
+  const spots = [{ x: .575, y: .43, a: THETA + .035 }, { x: .465, y: .585, a: THETA - .045 }];
+  SHIPS.forEach((s, i) => {
+    const p = spots[i], x = p.x * W, y = p.y * H, sz = .8 * K;
+    g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+    g.save(); g.translate(x, y); g.rotate(-p.a); g.scale(sz, sz); g.drawImage(s.plain, -88, -50); g.restore();
+    g.globalCompositeOperation = 'lighter';                         // small stretched engine glow behind the ship, nothing else
+    const hx = Math.cos(p.a), hy = -Math.sin(p.a);
+    g.save(); g.translate(x - hx * 17 * K, y - hy * 17 * K); g.rotate(-p.a); g.scale(2.6, .55);
+    g.globalAlpha = .8; g.drawImage(glowSprite, -9 * K, -9 * K, 18 * K, 18 * K); g.restore();
+    g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+  });
+}
+function drawBg(now) {
+  if (t0now === null) t0now = now;
+  const t = T0 + (now - t0now) / 1000;
+  if (++nebCount >= NEB_EVERY) {                       // slow-moving nebula: re-render only every few frames
+    nebCount = 0; sc0 = scrollAcc;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, nebFbo); gl.viewport(0, 0, NW, NH); gl.useProgram(pNeb);
+    gl.uniform2f(UN.R, NW, NH); gl.uniform2f(UN.AX, D.x, D.y); gl.uniform1f(UN.T, t); gl.uniform1f(UN.SC, scrollAcc);
+    gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+  gl.viewport(0, 0, bgc.width, bgc.height); gl.useProgram(pComp);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, nebTex); gl.uniform1i(UC.NT, 0);
+  gl.uniform2f(UC.R, bgc.width, bgc.height); gl.uniform2f(UC.AX, D.x, D.y);
+  const d = (scrollAcc - sc0) * .25 / 4.4;               // sub-frame scroll between nebula renders (KK / F)
+  gl.uniform2f(UC.SHIFT, -D.x * d, -D.y * d);
+  gl.uniform1f(UC.T, t); gl.uniform1f(UC.SC, scrollAcc);
+  gl.uniform1f(UC.bass, S.bass); gl.uniform1f(UC.mid, S.mid); gl.uniform1f(UC.high, S.high); gl.uniform1f(UC.beat, S.beat); gl.uniform1f(UC.en, S.energy); gl.uniform1f(UC.calm, CALM); gl.uniform1f(UC.gain, GAIN);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+/* ---------- foreground: ships, beams, rocks, sparks (2D canvas) ---------- */
+const fgc = document.getElementById('fg'), g = fgc.getContext('2d');
+let W = 0, H = 0;
+const THETA = 32 * Math.PI / 180;                     // flight direction: up-right
+const D = { x: Math.cos(THETA), y: -Math.sin(THETA) }; // forward
+const N = { x: Math.sin(THETA), y: Math.cos(THETA) };  // lateral
+function resize() {
+  const cw = innerWidth, ch = innerHeight;
+  bgc.width = Math.max(2, Math.round(cw * BGS)); bgc.height = Math.max(2, Math.round(ch * BGS));
+  W = fgc.width = Math.max(2, Math.round(cw * FGS)); H = fgc.height = Math.max(2, Math.round(ch * FGS));
+  setupNeb(cw, ch); K = H / 1080;
+}
+addEventListener('resize', resize); resize();
+
+function mkSprite(w, h, fn) { const c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d'), w, h); return c; }
+function shipSprite(hull, accent, glow, noHalo) {
+  return mkSprite(160, 100, (c, w, h) => {
+    c.translate(w * 0.55, h / 2);
+    if (!noHalo) { const gg = c.createRadialGradient(0, 0, 2, 0, 0, 48); gg.addColorStop(0, glow + '0.45)'); gg.addColorStop(1, glow + '0)');
+    c.fillStyle = gg; c.fillRect(-w, -h, w * 2, h * 2); }
+    c.lineJoin = 'round';
+    c.fillStyle = hull; c.strokeStyle = accent; c.lineWidth = 1.5;
+    c.beginPath(); c.moveTo(34, 0); c.lineTo(-6, -8); c.lineTo(-26, -30); c.lineTo(-20, -6); c.lineTo(-30, 0);
+    c.lineTo(-20, 6); c.lineTo(-26, 30); c.lineTo(-6, 8); c.closePath(); c.fill(); c.stroke();
+    const hg = c.createLinearGradient(30, 0, -20, 0); hg.addColorStop(0, '#fff'); hg.addColorStop(1, accent);
+    c.fillStyle = hg; c.beginPath(); c.moveTo(34, 0); c.lineTo(2, -5); c.lineTo(-18, 0); c.lineTo(2, 5); c.closePath(); c.fill();
+    c.fillStyle = 'rgba(190,240,255,.9)'; c.beginPath(); c.ellipse(8, 0, 7, 2.6, 0, 0, 7); c.fill();
+  });
+}
+const rockSprites = [0, 1, 2].map(k => mkSprite(96, 96, (c, w, h) => {
+  c.translate(w / 2, h / 2); const n = 10 + k * 2, pts = [];
+  for (let i = 0; i < n; i++) { const a = i / n * 6.283, r = 26 + Math.random() * 14; pts.push([Math.cos(a) * r, Math.sin(a) * r * (0.8 + Math.random() * 0.25)]); }
+  const gr = c.createRadialGradient(-12, -12, 4, 0, 0, 44); gr.addColorStop(0, '#9aa0c8'); gr.addColorStop(.55, '#4a4f78'); gr.addColorStop(1, '#171a35');
+  c.fillStyle = gr; c.strokeStyle = 'rgba(190,200,255,.35)'; c.lineWidth = 1.3;
+  c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath(); c.fill(); c.stroke();
+  c.fillStyle = 'rgba(0,0,10,.28)'; for (let i = 0; i < 4; i++) { c.beginPath(); c.arc((Math.random() - .5) * 30, (Math.random() - .5) * 30, 2 + Math.random() * 5, 0, 7); c.fill(); }
+}));
+const glowSprite = mkSprite(64, 64, (c, w, h) => { const r = c.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(.25, 'rgba(255,255,255,.5)'); r.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = r; c.fillRect(0, 0, 64, 64); });
+
+function haloSprite(c) { return mkSprite(128, 128, (x) => { const r = x.createRadialGradient(64, 64, 0, 64, 64, 64); r.addColorStop(0, `rgba(${c[0]},${c[1]},${c[2]},.95)`); r.addColorStop(.3, `rgba(${c[0]},${c[1]},${c[2]},.38)`); r.addColorStop(1, `rgba(${c[0]},${c[1]},${c[2]},0)`); x.fillStyle = r; x.fillRect(0, 0, 128, 128); }); }
+function neonShip(rim, glow) {
+  return mkSprite(200, 140, (c, w, h) => {
+    c.translate(w * 0.56, h / 2); c.lineJoin = 'round'; c.lineCap = 'round';
+    const wing = () => { c.beginPath(); c.moveTo(34, 0); c.lineTo(-6, -8); c.lineTo(-26, -30); c.lineTo(-20, -6); c.lineTo(-30, 0); c.lineTo(-20, 6); c.lineTo(-26, 30); c.lineTo(-6, 8); c.closePath(); };
+    wing(); c.fillStyle = 'rgba(5,7,18,.94)'; c.fill();
+    c.shadowColor = glow; c.shadowBlur = 22; c.strokeStyle = glow; c.lineWidth = 6; wing(); c.stroke();
+    c.shadowBlur = 12; c.lineWidth = 4; c.strokeStyle = rim; wing(); c.stroke();
+    c.shadowBlur = 6; c.lineWidth = 2; c.strokeStyle = '#fff'; wing(); c.stroke();
+    c.shadowBlur = 8; c.shadowColor = glow; c.strokeStyle = rim; c.lineWidth = 2.2;
+    c.beginPath(); c.moveTo(34, 0); c.lineTo(-24, 0); c.moveTo(-6, -8); c.lineTo(-20, -22); c.moveTo(-6, 8); c.lineTo(-20, 22); c.stroke();
+    c.shadowBlur = 10; c.fillStyle = '#fff'; c.beginPath(); c.ellipse(10, 0, 6, 2.2, 0, 0, 7); c.fill();
+  });
+}
+const SHIPS = [
+  { name: 'A', spr: shipSprite('#1d3a7a', '#7fd0ff', 'rgba(120,255,170,'), core: [200, 255, 215], mid: [70, 255, 120], edge: [20, 180, 90], ph: 0.0, base: [0.04, -0.19] },
+  { name: 'B', spr: shipSprite('#7a1d4a', '#ff8fc8', 'rgba(255,90,190,'), core: [255, 215, 240], mid: [255, 80, 190], edge: [190, 30, 130], ph: 2.3, base: [-0.06, 0.19] },
+];
+SHIPS.forEach(s => { s.plain = s.name === 'A' ? shipSprite('#1d3a7a', '#7fd0ff', 'rgba(120,255,170,', true) : shipSprite('#7a1d4a', '#ff8fc8', 'rgba(255,90,190,', true); s.neon = s.name === 'A' ? neonShip('#8dffbd', 'rgb(40,255,130)') : neonShip('#ffa6dc', 'rgb(255,50,175)'); s.x = W * .5; s.y = H * .5; s.vx = s.vy = 0; s.ang = THETA; s.trail = []; });
+SHIPS[0].lane = -.45; SHIPS[1].lane = .45;
+SHIPS.forEach(s => { s.laneFrom = s.lane; s.laneTo = s.lane; s.laneT = 1; s.dur = .8; s.pass = 0; s.passDir = 0; s.roll = -1; s.burst = 0; });
+let beatN = 0, swapN = 0, moveN = 0, rollN = 0, lastRollAt = 0, lastSwapAt = 0, lastJumpAt = 0;
+const easeS = t => t * t * (3 - 2 * t);
+const ROCKS = Array.from({ length: 0 }, (_, i) => ({ u: Math.random(), v: Math.random(), z: .45 + Math.random() * .9, a: Math.random() * 6.28, w: (Math.random() - .5) * .6, k: i % 3, s: .5 + Math.random() * .8 }));
+const SPARKS = [];
+
+let tm = 0, speed = .2, scrollAcc = 0;
+function spring(cur, tgt, vel, k, c, dt) { const a = k * (tgt - cur) - c * vel; return [cur + (vel + a * dt) * dt, vel + a * dt]; }
+
+function step(now, dt) {
+  analyse(now, dt);
+  if (S.fire) speed += .12;                       // instant surge on every beat
+  const e = S.energy;
+  const tgtSpeed = .16 + e * .85 + S.beat * .45;
+  speed += (tgtSpeed - speed) * (1 - Math.pow(.006, dt));
+  const pxSpeed = speed * W;
+  scrollAcc += speed * dt;
+  tm += dt * (.55 + e * 1.35);
+
+  // ---- choreography: each kind of sound drives a different move ----
+  const lively = e >= .18, wild = e > .5;
+  if (S.fire) beatN++;
+  const busy = SHIPS.some(sh => sh.laneT < 1);
+  if (S.fire && wild && beatN % 4 === 0 && !busy && now - lastSwapAt > 5000) {                   // every 4th bass hit while loud: the ships CROSS and swap sides
+    const a = SHIPS[0], b = SHIPS[1]; swapN++; lastSwapAt = now;
+    a.laneFrom = a.lane; a.laneTo = b.lane; b.laneFrom = b.lane; b.laneTo = a.lane;
+    a.laneT = b.laneT = 0; a.dur = b.dur = .9; a.passDir = swapN % 2 ? 1 : -1; b.passDir = -a.passDir;   // one passes ahead, one behind
+  } else if (S.midHit && lively && !busy && now - lastJumpAt > 1800) {                           // mid accent: ONE ship jumps to a new lane (they take turns)
+    lastJumpAt = now; const idx = moveN++ % 2, sh = SHIPS[idx], o = SHIPS[1 - idx];
+    const lanes = [-.85, -.5, -.15, .15, .5, .85].filter(l => Math.abs(l - o.lane) >= .4 && Math.abs(l - sh.lane) > .05);
+    if (lanes.length) { sh.laneFrom = sh.lane; sh.laneTo = lanes[(Math.random() * lanes.length) | 0]; sh.laneT = 0; sh.dur = .6; sh.passDir = 0; }
+  }
+  if (S.highHit && wild && now - lastRollAt > 3200) {                  // high sparkle while loud: one ship does a barrel-roll FLIP
+    const sh = SHIPS[rollN++ % 2]; if (sh.roll < 0) { sh.roll = 0; sh.burst = 12; lastRollAt = now; }
+  }
+  SHIPS.forEach(sh => {
+    if (sh.laneT < 1) { sh.laneT = Math.min(1, sh.laneT + dt / sh.dur); sh.lane = sh.laneFrom + (sh.laneTo - sh.laneFrom) * easeS(sh.laneT); sh.pass = sh.passDir * .11 * Math.sin(Math.PI * sh.laneT); }
+    else sh.pass = 0;
+    if (sh.roll >= 0) { sh.roll += dt / .75; if (sh.roll >= 1) sh.roll = -1; }
+    const side = Math.sign(sh.lane || 1);
+    sh.u = Math.max(-1.2, Math.min(1.2, sh.lane + side * S.cent * .30));         // higher pitch = ships spread apart, lower = they come together
+  });
+  if (!SHIPS.some(sh => sh.passDir !== 0 && sh.laneT < 1) && Math.abs(SHIPS[0].u - SHIPS[1].u) < .3) {   // never overlap (except while crossing)
+    const m = (SHIPS[0].u + SHIPS[1].u) / 2, sg = SHIPS[0].u >= SHIPS[1].u ? 1 : -1;
+    SHIPS[0].u = m + sg * .15; SHIPS[1].u = m - sg * .15;
+  }
+
+  SHIPS.forEach(s => {
+    const side = Math.sign(s.lane || 1), u = s.u;
+    const lat = u * .30 * H + Math.sin(tm * 1.3 + s.ph) * .025 * H * S.mid
+              + (s.roll >= 0 ? side * .09 * H * Math.sin(Math.PI * s.roll) : 0);       // small dart outwards during a flip
+    const fwd = (Math.sin(tm * .6 + s.ph * 1.3) * .03 + S.bass * .13 + S.beat * .05 + s.base[0] + s.pass) * W;
+    const cx = W * .47, cy = H * .53;
+    const tx = cx + D.x * fwd + N.x * lat, ty = cy + D.y * fwd + N.y * lat;
+    const k = 24 + e * 34, c = 2 * Math.sqrt(k) * .9;
+    let r = spring(s.x, tx, s.vx, k, c, dt); s.x = r[0]; s.vx = r[1];
+    r = spring(s.y, ty, s.vy, k, c, dt); s.y = r[0]; s.vy = r[1];
+    const latV = s.vx * N.x + s.vy * N.y;
+    const bank = Math.atan2(latV, pxSpeed * 1.2 + 80) * .9;
+    s.ang += ((THETA - bank) - s.ang) * (1 - Math.pow(.0005, dt));
+    for (const p of s.trail) { p.x -= D.x * pxSpeed * dt; p.y -= D.y * pxSpeed * dt; p.age += dt; }
+    const hd = { x: Math.cos(s.ang), y: -Math.sin(s.ang) };
+    s.trail.push({ x: s.x - hd.x * 9 * K, y: s.y - hd.y * 9 * K, age: 0, e: e, b: S.beat });
+    const life = 1.7 + e * .9;
+    while (s.trail.length && s.trail[0].age > life) s.trail.shift();
+    if (s.burst) { for (let i = 0; i < s.burst && SPARKS.length < 160; i++) { const a = Math.random() * 6.283, v = (60 + Math.random() * 200) * K; SPARKS.push({ x: s.x, y: s.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, t: 0, l: .4 + Math.random() * .4 }); } s.burst = 0; }
+    if (S.fire) for (let i = 0; i < 14 && SPARKS.length < 160; i++) {
+      const a = s.ang + Math.PI + (Math.random() - .5) * .9, v = (80 + Math.random() * 260) * K;
+      SPARKS.push({ x: s.x - hd.x * 9 * K, y: s.y - hd.y * 9 * K, vx: Math.cos(a) * v, vy: -Math.sin(a) * v, t: 0, l: .45 + Math.random() * .5 });
+    }
+  });
+  S.fire = false;
+  for (let i = SPARKS.length - 1; i >= 0; i--) { const p = SPARKS[i]; p.t += dt; p.x += (p.vx - D.x * pxSpeed * .8) * dt; p.y += (p.vy - D.y * pxSpeed * .8) * dt; p.vx *= Math.pow(.2, dt); p.vy *= Math.pow(.2, dt); if (p.t > p.l) SPARKS.splice(i, 1); }
+  ROCKS.forEach(r => {
+    r.u -= D.x * speed * dt * r.z * .9;
+    r.v -= D.y * speed * dt * r.z * .9 * (W / H);
+    r.a += r.w * dt * (.4 + e * 2);
+  });
+}
+
+function drawBeam(s) {
+  const t = s.trail; if (t.length < 3) return;
+  const life = 1.7 + S.energy * .9, wBase = (2.2 + S.energy * 3 + S.beat * 2.2) * K * 1.5;
+  const pts = t.concat([{ x: s.x, y: s.y, age: 0 }]), n = pts.length;
+  const Lp = [], Rp = [];
+  for (let i = 0; i < n; i++) {
+    const o = pts[Math.max(i - 1, 0)], q = pts[Math.min(i + 1, n - 1)], p = pts[i];
+    const dx = q.x - o.x, dy = q.y - o.y, d = Math.hypot(dx, dy) || 1, nx = -dy / d, ny = dx / d;
+    const f = Math.max(0, 1 - p.age / life), hw = Math.max(.3, wBase * (.2 + .8 * f)) / 2;
+    Lp.push([p.x + nx * hw, p.y + ny * hw, hw]); Rp.push([p.x - nx * hw, p.y - ny * hw, hw]);
+  }
+  const head = pts[n - 1], tail = pts[0];
+  for (const [wm, am, col] of [[4.2, .09, s.edge], [2.3, .24, s.mid], [1.0, .95, s.core]]) {
+    const gr = g.createLinearGradient(head.x, head.y, tail.x, tail.y), c = col.join(',');
+    gr.addColorStop(0, `rgba(${c},${am})`); gr.addColorStop(.5, `rgba(${c},${am * .45})`); gr.addColorStop(1, `rgba(${c},0)`);
+    g.fillStyle = gr; g.beginPath();
+    g.moveTo(Lp[0][0], Lp[0][1]);
+    for (let i = 1; i < n; i++) g.lineTo(head.x * 0 + (Lp[i][0] - pts[i].x) * wm + pts[i].x, (Lp[i][1] - pts[i].y) * wm + pts[i].y);
+    for (let i = n - 1; i >= 0; i--) g.lineTo((Rp[i][0] - pts[i].x) * wm + pts[i].x, (Rp[i][1] - pts[i].y) * wm + pts[i].y);
+    g.closePath(); g.fill();
+    g.beginPath(); g.arc(head.x, head.y, Lp[n - 1][2] * wm, 0, 7); g.fill();
+  }
+}
+
+function draw() {
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+  g.globalCompositeOperation = 'source-over';
+  ROCKS.forEach(r => {
+    const x = ((r.u % 1) + 1) % 1, y = ((r.v % 1) + 1) % 1;
+    const sz = 64 * r.s * K * (.6 + r.z * .6);
+    g.globalAlpha = .55 + r.z * .4; g.save(); g.translate(x * W, y * H); g.rotate(r.a); g.drawImage(rockSprites[r.k], -sz / 2, -sz / 2, sz, sz); g.restore();
+  });
+  g.globalAlpha = 1; g.globalCompositeOperation = 'lighter';
+  SHIPS.forEach(drawBeam);
+  for (const p of SPARKS) { const f = 1 - p.t / p.l, sz = 5 * K * f + 1.2; g.globalAlpha = f * .9; g.drawImage(glowSprite, p.x - sz, p.y - sz, sz * 2, sz * 2); }
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'source-over';
+  SHIPS.forEach(s => {
+    const sz = 0.5 * K; g.save(); g.translate(s.x, s.y); g.rotate(-s.ang);
+    const rs0 = s.roll < 0 ? 1 : Math.cos(s.roll * 2 * Math.PI), rs = Math.abs(rs0) < .08 ? .08 * (rs0 < 0 ? -1 : 1) : rs0;
+    g.scale(sz * (1 + S.beat * .05), sz * (1 + S.beat * .05) * rs); g.drawImage(s.spr, -88, -50); g.restore();
+    g.globalCompositeOperation = 'lighter';
+    const fs = (11 + S.energy * 15 + S.beat * 10) * K, hx = Math.cos(s.ang), hy = -Math.sin(s.ang);
+    g.globalAlpha = .75; g.drawImage(glowSprite, s.x - hx * 9 * K - fs, s.y - hy * 9 * K - fs, fs * 2, fs * 2);
+    g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+  });
+}
+
+let last = performance.now(), frames = 0, fpsT = last, fpsV = 0, paused = false;
+window.P = v => { paused = !!v; };
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (paused) { last = now; return; }
+  if (now - last < 1000 / FPS - 2) return;
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (STILL) { scrollAcc = 0; Object.assign(S, { bass: S0, mid: S0, high: S0, energy: S0, beat: 0 }); drawBg(now); g.clearRect(0, 0, W, H); if (Q.has('ships')) drawStillShips(); paused = true; return; }
+  step(now, dt); drawBg(now); draw();
+  frames++; if (now - fpsT > 1000) { fpsV = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  if (dbg.style.display === 'block') dbg.textContent = `fps ${fpsV.toFixed(0)}  live ${S.live}\nbass ${S.bass.toFixed(2)} mid ${S.mid.toFixed(2)} high ${S.high.toFixed(2)}\nenergy ${S.energy.toFixed(2)} beat ${S.beat.toFixed(2)} speed ${speed.toFixed(2)}\npitch ${S.cent.toFixed(2)} swaps ${swapN} jumps ${moveN} flips ${rollN} lanes ${SHIPS[0].lane.toFixed(2)}/${SHIPS[1].lane.toFixed(2)}`;
+}
+requestAnimationFrame(loop);
+</script></body></html>

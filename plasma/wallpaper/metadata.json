@@ -1,0 +1,15 @@
+{
+  "KPlugin": {
+    "Authors": [{ "Name": "SpaceWall" }],
+    "Category": "Wallpaper",
+    "Description": "Audio-reactive space wallpaper with two neon ships (needs the SpaceWall bridge running)",
+    "Id": "org.spacewall.ships",
+    "License": "MIT",
+    "Name": "SpaceWall Ships",
+    "ServiceTypes": ["Plasma/Wallpaper"],
+    "Version": "1.0"
+  },
+  "KPackageStructure": "Plasma/Wallpaper",
+  "X-Plasma-API": "declarativeappletscript",
+  "X-Plasma-MainScript": "ui/main.qml"
+}
