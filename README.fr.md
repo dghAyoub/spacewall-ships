@@ -17,7 +17,8 @@ Il réagit à tout ce que votre ordinateur joue (Spotify, YouTube, jeux...), fon
 | <img src="docs/screenshot-1-quiet.jpg" width="400"><br>Un passage calme : faisceaux fins et ternes, pluie légère | <img src="docs/screenshot-2-build.jpg" width="400"><br>La musique monte : les faisceaux deviennent plus brillants |
 | <img src="docs/screenshot-3-loud.jpg" width="400"><br>Le passage fort : faisceaux brillants et épais, pluie dense | <img src="docs/screenshot-4-crossing.jpg" width="400"><br>Les vaisseaux se croisent et échangent leurs côtés |
 
-Courte vidéo (24 s, sans son, moins de 1 Mo) : [`docs/preview.mp4`](docs/preview.mp4). Elle va d'un passage calme au passage fort, avec un croisement.
+Vidéo en pleine qualité (24 s, 1280x720, sans son, 6,6 Mo) : [`docs/preview.mp4`](docs/preview.mp4). Elle va d'un passage calme au passage fort, avec un croisement.
+GitHub ne lit pas les fichiers vidéo stockés dans un dépôt directement sur la page : cliquez sur le fichier, puis sur **Download** (ou *View raw*) pour la regarder dans votre navigateur ou votre lecteur vidéo.
 L'aperçu a été enregistré avec un morceau de démonstration original généré par ordinateur : ce dépôt ne contient donc aucune musique protégée.
 
 ## Prérequis
