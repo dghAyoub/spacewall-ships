@@ -14,10 +14,10 @@ Il réagit à tout ce que votre ordinateur joue (Spotify, YouTube, jeux...), fon
 ## Aperçu
 | | |
 |---|---|
-| <img src="docs/screenshot-1-calm.jpg" width="400"><br>Un passage calme | <img src="docs/screenshot-2-build.jpg" width="400"><br>La musique monte |
-| <img src="docs/screenshot-3-loud.jpg" width="400"><br>Passage fort : faisceaux épais, pluie dense | <img src="docs/screenshot-4-crossing.jpg" width="400"><br>Les vaisseaux se croisent et échangent leurs côtés |
+| <img src="docs/screenshot-1-quiet.jpg" width="400"><br>Un passage calme : faisceaux fins et ternes, pluie légère | <img src="docs/screenshot-2-build.jpg" width="400"><br>La musique monte : les faisceaux deviennent plus brillants |
+| <img src="docs/screenshot-3-loud.jpg" width="400"><br>Le passage fort : faisceaux brillants et épais, pluie dense | <img src="docs/screenshot-4-crossing.jpg" width="400"><br>Les vaisseaux se croisent et échangent leurs côtés |
 
-Vidéo en pleine qualité (35 s, sans son) : [`docs/preview.mp4`](docs/preview.mp4).
+Courte vidéo (24 s, sans son, moins de 1 Mo) : [`docs/preview.mp4`](docs/preview.mp4). Elle va d'un passage calme au passage fort, avec un croisement.
 L'aperçu a été enregistré avec un morceau de démonstration original généré par ordinateur : ce dépôt ne contient donc aucune musique protégée.
 
 ## Prérequis
