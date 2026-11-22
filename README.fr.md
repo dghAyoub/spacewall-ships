@@ -42,6 +42,17 @@ Un petit programme Windows à part entière (sans Lively ni autre application) :
 - Paquets (l'installateur les vérifie) : `python3 pulseaudio-utils xdotool x11-utils iproute2 qdbus-qt5 libkf5service-bin qml-module-qtwebengine`
   (`pulseaudio-utils` fonctionne aussi avec PipeWire).
 
+## L'essayer sans rien installer (Linux)
+Vous ne voulez pas toucher à votre bureau ? Lancez seulement le pont audio et regardez le fond d'écran dans un onglet du navigateur. Rien n'est installé, aucun réglage de Plasma ne change, pas de sudo :
+```bash
+git clone https://github.com/dghAyoub/spacewall-ships.git
+cd spacewall-ships/app
+python3 bridge.py
+```
+Ouvrez ensuite <http://127.0.0.1:8777/index.html> (`F11` pour le plein écran) et lancez de la musique. Arrêt avec `Ctrl+C`. Il faut `python3` et `parec` (`pulseaudio-utils`) ; `xdotool` et `x11-utils` ne servent qu'à mettre en pause sous une fenêtre plein écran.
+
+**Ce que l'installateur complet modifie** (pour décider) : il copie des fichiers dans `~/SpaceWall-ships`, ajoute le plugin de fond d'écran et le bouton du panneau sous `~/.local/share/plasma/`, et ajoute une entrée de démarrage automatique dans `~/.config/autostart/`. Il n'utilise `sudo` que si vous passez `--install-deps`. `./install.sh --no-activate` installe sans changer votre fond d'écran, et `./uninstall.sh` retire tout ce qu'il a ajouté.
+
 ## Installation sous Linux
 ```bash
 git clone https://github.com/dghAyoub/spacewall-ships.git
