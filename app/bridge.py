@@ -14,6 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get('SPACEWALL_PORT', '8777'))
 clients, lock, state = set(), threading.Lock(), {'paused': False}
 FLAG = os.path.expanduser('~/.config/spacewall-ships.off')   # exists = animation switched off
+ALLOWED_HOSTS = {'127.0.0.1:%d' % PORT, 'localhost:%d' % PORT}
 
 
 def is_on():
@@ -41,6 +42,11 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
+        # Block DNS-rebinding: a web page on another domain must not be able to read this server
+        # (and with it the audio stream) even if its hostname is made to resolve to 127.0.0.1.
+        if (self.headers.get('Host') or '').lower() not in ALLOWED_HOSTS:
+            self.send_error(403, 'forbidden host')
+            return
         if self.path.split('?')[0] == '/audio':
             return self.audio()
         if self.path.split('?')[0] == '/state':
@@ -88,12 +94,29 @@ def audio_thread():
         print('parec not found: no live audio')
         return
     p = None
+    mon = None
+    last_check = 0.0
+
+    def stop(proc):
+        if proc:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)                  # reap it: no zombie process
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.wait()
+        return None
+
     while True:
         if not is_on():                               # switched off: stop recording completely
-            if p:
-                p.terminate(); p = None
+            p = stop(p)
             time.sleep(0.5)
             continue
+        # follow the default output: if you switch to headphones/Bluetooth, parec would otherwise keep
+        # listening to the old (now silent) device forever
+        if p is not None and time.time() - last_check > 3:
+            last_check = time.time()
+            if default_monitor() != mon:
+                p = stop(p)
         if p is None or p.poll() is not None:
             mon = default_monitor()
             try:
@@ -115,6 +138,9 @@ def audio_thread():
 
 def fullscreen_thread():
     while True:
+        if not is_on():                               # switched off: do not spawn xdotool/xprop for nothing
+            time.sleep(1.5)
+            continue
         try:
             wid = subprocess.check_output(['xdotool', 'getactivewindow'], text=True, timeout=1).strip()
             st = subprocess.check_output(['xprop', '-id', wid, '_NET_WM_STATE'], text=True, timeout=1)
